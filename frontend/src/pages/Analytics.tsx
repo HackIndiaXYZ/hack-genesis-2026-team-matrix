@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import {
   Activity,
@@ -85,7 +85,10 @@ function formatSignal(value: number | null): string {
   return value === null ? "--" : `${value} dBm`;
 }
 
-// Assumes the backend stores sonar_range in metres.
+// IMPORTANT:
+// This formatter assumes the backend sends sonar_range in metres.
+// If your ESP32 sends millimetres or centimetres, convert the
+// value in the firmware or backend before displaying it here.
 function formatRange(value: number | null): string {
   return value === null ? "--" : `${value.toFixed(3)} m`;
 }
@@ -100,6 +103,14 @@ function formatTime(timestamp: string): string {
   });
 }
 
+function isValidTimestamp(timestamp: string): boolean {
+  return Number.isFinite(Date.parse(timestamp));
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
 function calculateStatistics(values: number[]): Statistics {
   if (values.length === 0) {
     return {
@@ -110,18 +121,14 @@ function calculateStatistics(values: number[]): Statistics {
     };
   }
 
+  const sum = values.reduce((total, value) => total + value, 0);
+
   return {
     current: values[values.length - 1],
     minimum: Math.min(...values),
     maximum: Math.max(...values),
-    average:
-      values.reduce((total, value) => total + value, 0) /
-      values.length,
+    average: sum / values.length,
   };
-}
-
-function isValidTimestamp(timestamp: string): boolean {
-  return Number.isFinite(Date.parse(timestamp));
 }
 
 // =====================================================
@@ -139,8 +146,10 @@ export default function Analytics() {
   // FETCH TELEMETRY HISTORY
   // ---------------------------------------------------
 
-  const fetchHistory = useCallback(async () => {
-    setRefreshing(true);
+  const fetchHistory = useCallback(async (manual = false) => {
+    if (manual) {
+      setRefreshing(true);
+    }
 
     try {
       const response = await fetch(API_URL, {
@@ -153,11 +162,21 @@ export default function Analytics() {
 
       const data: TelemetryHistoryResponse = await response.json();
 
-      if (!Array.isArray(data.readings)) {
+      if (!data || !Array.isArray(data.readings)) {
         throw new Error("Invalid telemetry history response.");
       }
 
-      setReadings(data.readings);
+      // Ignore malformed records rather than allowing them to break charts.
+      const validReadings = data.readings.filter(
+        (reading): reading is TelemetryReading =>
+          reading !== null &&
+          typeof reading === "object" &&
+          typeof reading.node_id === "string" &&
+          typeof reading.timestamp === "string" &&
+          isValidTimestamp(reading.timestamp)
+      );
+
+      setReadings(validReadings);
       setLastUpdated(new Date());
       setError(null);
     } catch (err: unknown) {
@@ -172,18 +191,95 @@ export default function Analytics() {
     }
   }, []);
 
-  // Initial fetch and automatic five-second refresh.
-  useEffect(() => {
-    void fetchHistory();
+  // ---------------------------------------------------
+  // INITIAL FETCH + AUTOMATIC REFRESH
+  // ---------------------------------------------------
 
-    const intervalId = window.setInterval(() => {
-      void fetchHistory();
+  useEffect(() => {
+    let active = true;
+    let requestInProgress = false;
+
+    const loadHistory = async () => {
+      // Avoid overlapping requests if the backend is slow.
+      if (requestInProgress || !active) {
+        return;
+      }
+
+      requestInProgress = true;
+
+      try {
+        const response = await fetch(API_URL, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Backend returned HTTP ${response.status}`);
+        }
+
+        const data: TelemetryHistoryResponse = await response.json();
+
+        if (!active) {
+          return;
+        }
+
+        if (!data || !Array.isArray(data.readings)) {
+          throw new Error("Invalid telemetry history response.");
+        }
+
+        const validReadings = data.readings.filter(
+          (reading): reading is TelemetryReading =>
+            reading !== null &&
+            typeof reading === "object" &&
+            typeof reading.node_id === "string" &&
+            typeof reading.timestamp === "string" &&
+            isValidTimestamp(reading.timestamp)
+        );
+
+        setReadings(validReadings);
+        setLastUpdated(new Date());
+        setError(null);
+      } catch (err: unknown) {
+        if (!active) {
+          return;
+        }
+
+        if (err instanceof Error && err.name === "AbortError") {
+          return;
+        }
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to retrieve telemetry history."
+        );
+      } finally {
+        requestInProgress = false;
+
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    const controller = new AbortController();
+
+    // Defer the first request to avoid synchronous state changes in the effect.
+    const initialTimeout = window.setTimeout(() => {
+      void loadHistory();
+    }, 0);
+
+    const interval = window.setInterval(() => {
+      void loadHistory();
     }, REFRESH_INTERVAL);
 
     return () => {
-      window.clearInterval(intervalId);
+      active = false;
+      window.clearTimeout(initialTimeout);
+      window.clearInterval(interval);
+      controller.abort();
     };
-  }, [fetchHistory]);
+  }, []);
 
   // ---------------------------------------------------
   // TEMPERATURE DATA
@@ -195,13 +291,10 @@ export default function Analytics() {
         (
           reading
         ): reading is TelemetryReading & { temperature: number } =>
-          typeof reading.temperature === "number" &&
-          Number.isFinite(reading.temperature) &&
-          isValidTimestamp(reading.timestamp)
+          isFiniteNumber(reading.temperature)
       )
       .sort(
-        (a, b) =>
-          Date.parse(a.timestamp) - Date.parse(b.timestamp)
+        (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)
       )
       .map((reading) => ({
         time: formatTime(reading.timestamp),
@@ -228,13 +321,10 @@ export default function Analytics() {
         (
           reading
         ): reading is TelemetryReading & { signal_strength: number } =>
-          typeof reading.signal_strength === "number" &&
-          Number.isFinite(reading.signal_strength) &&
-          isValidTimestamp(reading.timestamp)
+          isFiniteNumber(reading.signal_strength)
       )
       .sort(
-        (a, b) =>
-          Date.parse(a.timestamp) - Date.parse(b.timestamp)
+        (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)
       )
       .map((reading) => ({
         time: formatTime(reading.timestamp),
@@ -261,14 +351,11 @@ export default function Analytics() {
         (
           reading
         ): reading is TelemetryReading & { sonar_range: number } =>
-          typeof reading.sonar_range === "number" &&
-          Number.isFinite(reading.sonar_range) &&
-          reading.sonar_range >= 0 &&
-          isValidTimestamp(reading.timestamp)
+          isFiniteNumber(reading.sonar_range) &&
+          reading.sonar_range >= 0
       )
       .sort(
-        (a, b) =>
-          Date.parse(a.timestamp) - Date.parse(b.timestamp)
+        (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)
       )
       .map((reading) => ({
         time: formatTime(reading.timestamp),
@@ -291,7 +378,6 @@ export default function Analytics() {
 
   return (
     <div className="min-h-full space-y-5 bg-[#030817] p-4 md:p-6">
-
       {/* HEADER */}
       <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-cyan-500/20 bg-[#071020] p-5">
         <div>
@@ -316,7 +402,7 @@ export default function Analytics() {
 
           <button
             type="button"
-            onClick={() => void fetchHistory()}
+            onClick={() => void fetchHistory(true)}
             disabled={refreshing}
             className="flex items-center gap-2 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300 transition hover:border-cyan-500/40 hover:text-cyan-300 disabled:opacity-50"
           >
@@ -331,32 +417,29 @@ export default function Analytics() {
 
       {/* ERROR MESSAGE */}
       {error && (
-        <section className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+        <section
+          role="alert"
+          className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300"
+        >
           <p className="font-medium">Unable to load telemetry</p>
 
-          <p className="mt-1 text-xs text-red-300/70">
-            {error}. Verify that FastAPI is running and the history
-            endpoint is available.
-          </p>
+          <p className="mt-1 text-xs text-red-300/70">{error}</p>
 
           <button
             type="button"
-            onClick={() => void fetchHistory()}
-            className="mt-3 text-xs underline underline-offset-4"
+            onClick={() => void fetchHistory(true)}
+            disabled={refreshing}
+            className="mt-3 text-xs underline underline-offset-4 disabled:opacity-50"
           >
             Try again
           </button>
         </section>
       )}
 
-      {/* =================================================
-          1. TEMPERATURE STATISTICS
-      ================================================= */}
-
+      {/* TEMPERATURE STATISTICS */}
       <section>
         <div className="mb-3 flex items-center gap-2">
           <Thermometer size={17} className="text-cyan-400" />
-
           <h2 className="text-sm font-semibold text-white">
             Temperature Statistics
           </h2>
@@ -454,14 +537,10 @@ export default function Analytics() {
         </LineChart>
       </ChartPanel>
 
-      {/* =================================================
-          2. L08 SONAR STATISTICS
-      ================================================= */}
-
+      {/* SONAR STATISTICS */}
       <section>
         <div className="mb-3 flex items-center gap-2">
           <Radio size={17} className="text-amber-400" />
-
           <h2 className="text-sm font-semibold text-white">
             L08 Sonar Range Statistics
           </h2>
@@ -472,7 +551,7 @@ export default function Analytics() {
             label="CURRENT RANGE"
             value={formatRange(sonarStats.current)}
             icon={<Radio size={19} />}
-            description="Latest valid L08 measurement"
+            description="Latest valid sonar measurement"
           />
 
           <StatCard
@@ -498,16 +577,16 @@ export default function Analytics() {
         </div>
       </section>
 
-      {/* L08 SONAR GRAPH */}
+      {/* SONAR GRAPH */}
       <ChartPanel
         title="L08 Sonar Range History"
         description="Distance measurements received from the ultrasonic sensor"
         count={sonarChartData.length}
         color="amber"
         loading={loading}
-        emptyMessage="No valid L08 readings received. Check sensor wiring, communication protocol, and backend telemetry."
+        emptyMessage="No valid sonar readings received. Check the sensor wiring, communication protocol, and backend telemetry."
         dataExists={sonarChartData.length > 0}
-        footer="Source: L08 ultrasonic sensor telemetry"
+        footer="Source: sonar sensor telemetry"
       >
         <LineChart
           data={sonarChartData}
@@ -549,7 +628,7 @@ export default function Analytics() {
           <Line
             type="monotone"
             dataKey="sonar_range"
-            name="L08 Sonar Range"
+            name="Sonar Range"
             stroke="#fbbf24"
             strokeWidth={2}
             dot={false}
@@ -559,14 +638,10 @@ export default function Analytics() {
         </LineChart>
       </ChartPanel>
 
-      {/* =================================================
-          3. WIFI STATISTICS
-      ================================================= */}
-
+      {/* WIFI STATISTICS */}
       <section>
         <div className="mb-3 flex items-center gap-2">
           <Wifi size={17} className="text-violet-400" />
-
           <h2 className="text-sm font-semibold text-white">
             Network Signal Statistics
           </h2>
@@ -668,10 +743,7 @@ export default function Analytics() {
         </LineChart>
       </ChartPanel>
 
-      {/* =================================================
-          TELEMETRY STATUS
-      ================================================= */}
-
+      {/* TELEMETRY STATUS */}
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-[#071020] p-4">
         <div>
           <p className="text-xs font-medium text-slate-300">
@@ -729,9 +801,7 @@ function StatCard({
 
       <p className="mt-4 text-2xl font-semibold text-white">{value}</p>
 
-      <p className="mt-2 text-[11px] text-slate-500">
-        {description}
-      </p>
+      <p className="mt-2 text-[11px] text-slate-500">{description}</p>
     </section>
   );
 }
@@ -782,9 +852,7 @@ function ChartPanel({
             {title}
           </h2>
 
-          <p className="mt-1 text-xs text-slate-500">
-            {description}
-          </p>
+          <p className="mt-1 text-xs text-slate-500">{description}</p>
         </div>
 
         <span
@@ -801,7 +869,7 @@ function ChartPanel({
           <ChartMessage message={emptyMessage} />
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            {children as React.ReactElement}
+            {children as ReactElement}
           </ResponsiveContainer>
         )}
       </div>
