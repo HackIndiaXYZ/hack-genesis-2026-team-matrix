@@ -1,75 +1,90 @@
-# React + TypeScript + Vite
+# 🌊 Aqua Sonar Network Security System (ASNSS)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+### AI-Assisted Underwater Monitoring and Network Security
 
-Currently, two official plugins are available:
+ASNSS is an underwater monitoring and security project designed to collect sensor telemetry, monitor underwater node health, visualize sensor readings, and help identify unusual underwater activity.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The system combines an ESP32-based hardware node, sensor telemetry, a FastAPI backend, and a React-based monitoring dashboard.
 
-## React Compiler
+> **Development status:** This project is under active development. Sensor detection, underwater operation, AI-based classification, and alert accuracy depend on hardware integration, validated sensor data, and future implementation.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## 📌 Table of Contents
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- [Overview](#-overview)
+- [Objectives](#-objectives)
+- [System Architecture](#-system-architecture)
+- [Features](#-features)
+- [Technology Stack](#-technology-stack)
+- [Project Structure](#-project-structure)
+- [Hardware Requirements](#-hardware-requirements)
+- [Getting Started](#-getting-started)
+- [Backend Setup](#-backend-setup)
+- [Frontend Setup](#-frontend-setup)
+- [API Endpoints](#-api-endpoints)
+- [Telemetry Format](#-telemetry-format)
+- [Configuration](#-configuration)
+- [Troubleshooting](#-troubleshooting)
+- [Future Scope](#-future-scope)
+- [Contributing](#-contributing)
+- [License](#-license)
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+---
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## 🌐 Overview
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Underwater environments present challenges for conventional monitoring systems because radio communication, environmental conditions, and sensor deployment can limit connectivity and visibility.
 
-```
+ASNSS aims to provide a modular monitoring platform that collects telemetry from underwater monitoring nodes and displays available measurements through a centralized dashboard.
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+The current software architecture supports telemetry ingestion, historical readings, node monitoring, and visualization. Sonar measurements depend on the sensor interface, firmware, and backend integration.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+---
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## 🎯 Objectives
 
-```
+- Collect telemetry from ESP32-based monitoring nodes.
+- Monitor temperature and network signal strength.
+- Integrate an ultrasonic or sonar sensor for range measurements.
+- Visualize telemetry through interactive charts and statistics.
+- Maintain historical telemetry for analysis.
+- Monitor node connectivity and system health.
+- Develop an extensible foundation for underwater activity detection.
+- Explore machine-learning-based anomaly detection as a future enhancement.
+
+---
+
+## 🏗️ System Architecture
+
+```text
+             SENSOR / UNDERWATER NODE
+                       |
+          +------------+------------+
+          |            |            |
+       ESP32       Temperature    Sonar Sensor
+          |           Sensor          |
+          +------------+--------------+
+                       |
+                Telemetry Payload
+                       |
+                Wi-Fi / Network
+                       |
+                       v
+                FASTAPI BACKEND
+                       |
+          +------------+-------------+
+          |            |             |
+      Telemetry      History       WebSocket
+       Endpoint      Endpoint      Interfaces
+          |            |             |
+          +------------+-------------+
+                       |
+                       v
+                REACT FRONTEND
+                       |
+          +------------+-------------+
+          |            |             |
+       Dashboard    Analytics       Alerts
+          |            |             |
+       Node View    Live Charts    Event View
