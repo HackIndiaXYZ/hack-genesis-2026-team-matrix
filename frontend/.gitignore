@@ -1,0 +1,22 @@
+cat >> .gitignore <<'EOF'
+
+# Dependencies and environments
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+
+# Editor and OS files
+.DS_Store
+.vscode/
+EOF
